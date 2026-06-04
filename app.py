@@ -1,8 +1,8 @@
 
-#app.py Ã¢ÂÂ Interfaz de usuario para el generador de horarios.
-#Solo contiene cÃÂ³digo de Streamlit; la lÃÂ³gica vive en utils.py.
+#app.py Interfaz de usuario para el generador de horarios.
+#Solo contiene cadigo de Streamlit; la logica vive en utils.py.
 
-#Si te paseas por acÃÂ¡ recuerda: no soy un experto ni un amateur, solo alguien curioso que tenÃÂ­a una laptop, YouTube y ayuda de IA.
+#Si te paseas por acá¡ recuerda: no soy un experto ni un amateur, solo alguien curioso que tenÃÂ­a una laptop, YouTube y ayuda de IA.
 
 import streamlit as st
 import pandas as pd
