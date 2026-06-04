@@ -36,7 +36,7 @@ def _parse_hora(s: str) -> str:
     return f"{h:02d}:{m:02d}:00"
 
 def cargar_materias(ruta: str) -> pd.DataFrame:
-    """Lee el CSV y repara columnas rotas (como 'SalÃ³n') y horas en distintos formatos."""
+    """Lee el CSV y repara columnas rotas, símbolos fantasma (BOM) y horas."""
     # Leemos el archivo crudo
     df = pd.read_csv(ruta, encoding='latin1')
 
@@ -54,7 +54,15 @@ def cargar_materias(ruta: str) -> pd.DataFrame:
                 columnas_limpias.append(c)
         else:
             columnas_limpias.append(c)
+            
+    # 🛡️ CÓDIGO DEFENSIVO EXTREMO: Eliminamos el Fantasma de Excel (BOM)
+    columnas_limpias = [c.replace('\ufeff', '').replace('ï»¿', '').strip() for c in columnas_limpias]
     df.columns = columnas_limpias
+    
+    # Blindaje de nombres: Forzamos a que las columnas vitales se llamen exactamente como queremos
+    df.rename(columns=lambda x: 'NRC' if 'NRC' in str(x).upper() else x, inplace=True)
+    df.rename(columns=lambda x: 'Materia' if 'MATERIA' in str(x).upper() else x, inplace=True)
+    df.rename(columns=lambda x: 'Dias' if 'DIA' in str(x).upper() else x, inplace=True)
 
     # MAGIA 2: Planchamos las horas al mismo formato universal
     for col in ['Hora_ini', 'Hora_fin']:
@@ -65,7 +73,6 @@ def cargar_materias(ruta: str) -> pd.DataFrame:
     df = df.dropna(subset=['Hora_ini', 'Hora_fin', 'Dias'])
 
     return df.reset_index(drop=True)
-
 # ==========================================
 # 2. UTILIDADES DE TIEMPO
 # ==========================================
