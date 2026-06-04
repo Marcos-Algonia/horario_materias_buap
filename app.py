@@ -111,13 +111,25 @@ with tab_algoritmo:
                 else:
                     st.success(f"¡Se encontraron {len(horarios_generados)} horarios viables sin empalmes!")
                     
-                    mejor_horario = horarios_generados[0]
-                    st.markdown(f"### 🏆 Mejor horario con tus selecciones")
-                    st.write(f"**NRCs a inscribir:** {', '.join(map(str, mejor_horario['nrcs']))}")
+                   mejor_horario = horarios_generados[0]
+                    st.markdown(f"### 🏆 Opción Óptima")
                     st.write(f"**Horas libres a la semana:** {mejor_horario['horas_muertas']} hrs")
                     
-                    # Preparamos al ganador y lo graficamos
+                    st.markdown("#### 📚 Detalle de Inscripción:")
+                    
+                    # Preparamos el dataframe ganador para extraer los datos y graficar
                     df_ganador = mejor_horario['df']
+                    
+                    # MAGIA: Extraemos las materias únicas con su NRC y Profesor, sin que se repitan los días
+                    info_clases = df_ganador[['Materia', 'NRC', 'Profesor']].drop_duplicates()
+                    
+                    # Imprimimos una lista elegante con la información
+                    for _, fila in info_clases.iterrows():
+                        st.write(f"- **{fila['Materia']}** (NRC: {fila['NRC']}) 👨‍🏫 **Profesor:** {fila['Profesor']}")
+                    
+                    st.markdown("---") # Una pequeña línea divisoria por estética
+                    
+                    # Inyectamos las variables de tiempo y dibujamos el horario ganador
                     df_ganador = agregar_columnas_temporales(df_ganador)
                     fig_ganador = construir_figura(df_ganador)
                     st.plotly_chart(fig_ganador, use_container_width=True, theme=None)
