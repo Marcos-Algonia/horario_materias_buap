@@ -65,8 +65,12 @@ def _desdoblar_horarios(df: pd.DataFrame) -> pd.DataFrame:
 
 def cargar_materias(ruta: str) -> pd.DataFrame:
     """Lee el CSV y repara columnas rotas, símbolos fantasma (BOM) y horas."""
-    df = pd.read_csv(ruta, encoding='latin1')
+    
+    # 🧠 MAGIA CERO: Detección automática de delimitador (Comas vs Puntos y Comas)
+    df = pd.read_csv(ruta, encoding='latin1', sep=None, engine='python')
+    
     df.columns = df.columns.str.strip()
+    # ... (El resto de tu código sigue exactamente igual hacia abajo)
 
     columnas_limpias = []
     for c in df.columns:
@@ -93,9 +97,29 @@ def cargar_materias(ruta: str) -> pd.DataFrame:
         if col in df.columns:
             df[col] = df[col].apply(_parse_hora)
 
-    df = df.dropna(subset=['Hora_ini', 'Hora_fin', 'Dias'])
-    return df.reset_index(drop=True)
+   # ... (código anterior de cargar_materias)
+    df = _desdoblar_horarios(df)
+    
+    # En caso de que no haya entrado al desdoble, nos aseguramos de que 'Dias' exista
+    df.rename(columns=lambda x: 'Dias' if 'DIA' in str(x).upper() else x, inplace=True)
 
+    # MAGIA 3: Planchamos las horas al mismo formato militar
+    for col in ['Hora_ini', 'Hora_fin']:
+        if col in df.columns:
+            df[col] = df[col].apply(_parse_hora)
+
+    # 🛡️ ESCUDO ANTI-COLAPSO: Verificamos si el purificador fabricó las columnas
+    columnas_requeridas = ['Hora_ini', 'Hora_fin', 'Dias']
+    faltantes = [c for c in columnas_requeridas if c not in df.columns]
+    
+    if faltantes:
+        # Si falló, detenemos el motor y le mostramos al ingeniero qué columnas leyó realmente
+        raise ValueError(f"Falla de purificación. Columnas reales detectadas en el CSV: {list(df.columns)}")
+
+    # Limpiamos remanentes
+    df = df.dropna(subset=['Hora_ini', 'Hora_fin', 'Dias'])
+
+    return df.reset_index(drop=True)
 # ==========================================
 # 2. UTILIDADES DE TIEMPO
 # ==========================================
