@@ -89,3 +89,117 @@ def agregar_columnas_temporales(df: pd.DataFrame) -> pd.DataFrame:
     df["end_dec"] = df["Hora_fin"].astype(str).apply(hms_a_decimal)
     df["duration_dec"] = df["end_dec"] - df["start_dec"]
     return df
+    # ==========================================
+# 3. EL MOTOR MATEMÁTICO (Empalmes y Generador)
+# ==========================================
+
+def detectar_empalmes(df: pd.DataFrame) -> list:
+    """Busca choques de horario en una estructura ya armada."""
+    mensajes = []
+    for dia, clases_del_dia in df.groupby("Dias"):
+        clases = clases_del_dia.sort_values("start_dec").reset_index(drop=True)
+        fin_anterior = clases["end_dec"].shift(1)
+        empalme = clases["start_dec"] < fin_anterior
+        for idx in clases[empalme].index:
+            materia_actual = clases.loc[idx, "Materia"]
+            materia_anterior = clases.loc[idx - 1, "Materia"]
+            mensajes.append(f"El día {dia}, **{materia_anterior}** choca con **{materia_actual}**.")
+    return mensajes
+
+def _hay_empalme(df_combo: pd.DataFrame) -> bool:
+    """Versión ultrarrápida para el motor de combinaciones: devuelve True al primer choque."""
+    for _, clases in df_combo.groupby("Dias"):
+        clases = clases.sort_values("start_dec").reset_index(drop=True)
+        if (clases["start_dec"] < clases["end_dec"].shift(1)).any():
+            return True
+    return False
+
+def _calcular_horas_muertas(df_combo: pd.DataFrame) -> float:
+    """Suma los huecos vacíos entre clases del mismo día."""
+    total = 0.0
+    for _, clases in df_combo.groupby("Dias"):
+        clases = clases.sort_values("start_dec").reset_index(drop=True)
+        gaps = clases["start_dec"].iloc[1:].values - clases["end_dec"].iloc[:-1].values
+        total += float(max(0, gaps.sum()))
+    return round(total, 2)
+
+def generar_horarios_optimos(df: pd.DataFrame, materias_deseadas: list, limite_horas: int = 4):
+    """El cerebro combinatorio: busca combinaciones viables sin empalmes."""
+    if "start_dec" not in df.columns:
+        df = agregar_columnas_temporales(df)
+
+    grupos_nrcs = []
+    for materia in materias_deseadas:
+        nrcs = df[df["Materia"] == materia]["NRC"].unique().tolist()
+        if not nrcs:
+            return None, f"No se encontraron secciones para '{materia}' en el catálogo."
+        grupos_nrcs.append(nrcs)
+
+    # Seguro de vida termodinámico
+    total_combos = 1
+    for grupo in grupos_nrcs:
+        total_combos *= len(grupo)
+    if total_combos > 50000:
+        return None, f"Hay {total_combos:,} combinaciones posibles. El sistema se sobrecalentará. Reduce las materias."
+
+    viables = []
+    for combo_nrcs in product(*grupos_nrcs):
+        df_combo = df[df["NRC"].isin(combo_nrcs)].copy()
+        
+        if _hay_empalme(df_combo):
+            continue
+            
+        horas_muertas = _calcular_horas_muertas(df_combo)
+        if horas_muertas > limite_horas:
+            continue
+            
+        viables.append({
+            "nrcs": list(combo_nrcs),
+            "horas_muertas": horas_muertas,
+            "df": df_combo,
+        })
+
+    viables.sort(key=lambda x: x["horas_muertas"])
+    return viables, f"Se encontraron {len(viables)} horarios viables."
+
+# ==========================================
+# 4. EL ARQUITECTO VISUAL (Plotly a prueba de fallos)
+# ==========================================
+
+def construir_figura(df: pd.DataFrame) -> go.Figure:
+    """Dibuja el horario con programación defensiva para las columnas."""
+    colors = px.colors.qualitative.Plotly
+    materia_to_color = {materia: colors[i % len(colors)] for i, materia in enumerate(df["Materia"].unique())}
+    
+    df = df.copy()
+    df["Color"] = df["Materia"].map(materia_to_color)
+
+    fig = go.Figure()
+    for materia, group in df.groupby("Materia"):
+        
+        # 🛡️ CÓDIGO DEFENSIVO: Buscamos el salón sin importar cómo venga escrito
+        if 'Salón' in group.columns:
+            salon_data = group['Salón']
+        elif 'Salon' in group.columns: 
+            salon_data = group['Salon']
+        else:
+            salon_data = ["Aula sin asignar"] * len(group)
+            
+        custom_data = list(zip(group['Profesor'], salon_data, group['Hora_ini'], group['Hora_fin']))
+        
+        fig.add_trace(go.Bar(
+            name=materia, x=group["Dia_Num"], y=group["duration_dec"], base=group["start_dec"],
+            marker_color=group["Color"].iloc[0], opacity=1.0,
+            customdata=custom_data, text=group["Materia"],
+            textposition="inside", insidetextanchor="middle",
+            hovertemplate="<b>%{text}</b><br><br><b>Profesor:</b> %{customdata[0]}<br><b>Salón:</b> %{customdata[1]}<br><b>Horario:</b> %{customdata[2]} - %{customdata[3]}<br><extra></extra>"
+        ))
+
+    horas = list(range(7, 22))
+    fig.update_layout(
+        barmode="overlay", paper_bgcolor="white", plot_bgcolor="white", font=dict(color="black"), height=700,
+        xaxis=dict(title="", side="top", tickmode="array", tickvals=[1, 2, 3, 4, 5, 6], ticktext=["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"], showgrid=True, gridcolor="#e5e5e5", zeroline=False),
+        yaxis=dict(title="Horario", range=[21.5, 6.5], tickmode="array", tickvals=horas, ticktext=[f"{h:02d}:00" for h in horas], showgrid=True, gridcolor="#e5e5e5", zeroline=False),
+        margin=dict(l=40, r=40, t=60, b=40),
+    )
+    return fig
