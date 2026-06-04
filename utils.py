@@ -1,3 +1,13 @@
+"""
+utils.py — Motor Maestro Krea-t
+Contiene: Purificador de datos (Melt/BOM), Motor Matemático y Arquitecto Visual.
+"""
+import re
+from itertools import product
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+
 # ==========================================
 # 1. EL PURIFICADOR DE DATOS
 # ==========================================
@@ -25,43 +35,32 @@ def _parse_hora(s: str) -> str:
 
 def _desdoblar_horarios(df: pd.DataFrame) -> pd.DataFrame:
     """Derrama las columnas de días (LUNES, MARTES...) en filas individuales Tidy Data."""
-    # Diccionario adaptado al sistema BUAP (Martes = A, Miércoles = M)
     dias_map = {
         'LUNES': 'L', 'MARTES': 'A', 'MIERCOLES': 'M', 'MIÉRCOLES': 'M',
         'JUEVES': 'J', 'VIERNES': 'V', 'SABADO': 'S', 'SÁBADO': 'S'
     }
 
-    # Buscamos qué columnas de días existen realmente en tu archivo
     dias_presentes = [c for c in df.columns if str(c).upper().strip() in dias_map.keys()]
 
-    # Si el archivo ya viene en formato de lista (como tu primer Excel), no hacemos nada
     if not dias_presentes:
         return df
 
-    # Separamos las columnas de identidad (NRC, Materia...) de las columnas de días
     id_vars = [c for c in df.columns if c not in dias_presentes]
-
-    # MAGIA: Derretimos la tabla ancha hacia abajo
     df_largo = df.melt(id_vars=id_vars, value_vars=dias_presentes, var_name='Dia_Nombre', value_name='Horario_Rango')
 
-    # Eliminamos las filas fantasma (días donde esa materia no da clases)
     df_largo = df_largo.dropna(subset=['Horario_Rango'])
     df_largo = df_largo[df_largo['Horario_Rango'].astype(str).str.strip() != '']
 
-    # Convertimos la palabra "LUNES" en la letra "L"
     df_largo['Dias'] = df_largo['Dia_Nombre'].str.upper().str.strip().map(dias_map)
 
-    # Función interna para partir "09:00 - 11:00" en dos pedazos
     def extraer_horas(texto):
         partes = str(texto).split('-')
         if len(partes) == 2:
             return partes[0].strip(), partes[1].strip()
         return None, None
 
-    # Aplicamos el corte y creamos las dos columnas nuevas
     df_largo['Hora_ini'], df_largo['Hora_fin'] = zip(*df_largo['Horario_Rango'].apply(extraer_horas))
 
-    # Tiramos a la basura las columnas que ya usamos para no ensuciar
     return df_largo.drop(columns=['Dia_Nombre', 'Horario_Rango'])
 
 def cargar_materias(ruta: str) -> pd.DataFrame:
@@ -69,7 +68,6 @@ def cargar_materias(ruta: str) -> pd.DataFrame:
     df = pd.read_csv(ruta, encoding='latin1')
     df.columns = df.columns.str.strip()
 
-    # MAGIA 1: Reparamos el Mojibake (Acentos y letras raras)
     columnas_limpias = []
     for c in df.columns:
         if any(ord(ch) > 127 for ch in c):
@@ -81,26 +79,155 @@ def cargar_materias(ruta: str) -> pd.DataFrame:
         else:
             columnas_limpias.append(c)
             
-    # ESCUDO DEFENSIVO: Eliminamos el Fantasma de Excel (BOM)
     columnas_limpias = [c.replace('\ufeff', '').replace('ï»¿', '').strip() for c in columnas_limpias]
     df.columns = columnas_limpias
     
-    # Aseguramos nombres clave
     df.rename(columns=lambda x: 'NRC' if 'NRC' in str(x).upper() else x, inplace=True)
     df.rename(columns=lambda x: 'Materia' if 'MATERIA' in str(x).upper() else x, inplace=True)
 
-    # MAGIA 2: Desdoblamos el horario si viene en columnas (como el de Ingeniería Ambiental)
     df = _desdoblar_horarios(df)
     
-    # En caso de que no haya entrado al desdoble, nos aseguramos de que 'Dias' exista
     df.rename(columns=lambda x: 'Dias' if 'DIA' in str(x).upper() else x, inplace=True)
 
-    # MAGIA 3: Planchamos las horas al mismo formato militar
     for col in ['Hora_ini', 'Hora_fin']:
         if col in df.columns:
             df[col] = df[col].apply(_parse_hora)
 
-    # Limpiamos remanentes
     df = df.dropna(subset=['Hora_ini', 'Hora_fin', 'Dias'])
-
     return df.reset_index(drop=True)
+
+# ==========================================
+# 2. UTILIDADES DE TIEMPO
+# ==========================================
+
+def hms_a_decimal(hms_str: str) -> float:
+    """Convierte '09:30:00' a 9.5 para graficar"""
+    h, m, s = map(int, str(hms_str).split(":"))
+    decimal = h + (m / 60.0) + (s / 3600.0)
+    if abs(decimal - round(decimal)) < 0.05:
+        return round(decimal)
+    return decimal
+
+def agregar_columnas_temporales(df: pd.DataFrame) -> pd.DataFrame:
+    """Inyecta la matemática de horas decimales para detectar empalmes"""
+    df = df.copy()
+    map_dias = {"L": 1, "A": 2, "M": 3, "J": 4, "V": 5, "S": 6}
+    df["Dia_Num"] = df["Dias"].map(map_dias)
+    df["start_dec"] = df["Hora_ini"].astype(str).apply(hms_a_decimal)
+    df["end_dec"] = df["Hora_fin"].astype(str).apply(hms_a_decimal)
+    df["duration_dec"] = df["end_dec"] - df["start_dec"]
+    return df
+
+# ==========================================
+# 3. EL MOTOR MATEMÁTICO
+# ==========================================
+
+def detectar_empalmes(df: pd.DataFrame) -> list:
+    mensajes = []
+    for dia, clases_del_dia in df.groupby("Dias"):
+        clases = clases_del_dia.sort_values("start_dec").reset_index(drop=True)
+        fin_anterior = clases["end_dec"].shift(1)
+        empalme = clases["start_dec"] < fin_anterior
+        for idx in clases[empalme].index:
+            materia_actual = clases.loc[idx, "Materia"]
+            materia_anterior = clases.loc[idx - 1, "Materia"]
+            mensajes.append(f"El día {dia}, **{materia_anterior}** choca con **{materia_actual}**.")
+    return mensajes
+
+def _hay_empalme(df_combo: pd.DataFrame) -> bool:
+    for _, clases in df_combo.groupby("Dias"):
+        clases = clases.sort_values("start_dec").reset_index(drop=True)
+        if (clases["start_dec"] < clases["end_dec"].shift(1)).any():
+            return True
+    return False
+
+def _calcular_horas_muertas(df_combo: pd.DataFrame) -> float:
+    total = 0.0
+    for _, clases in df_combo.groupby("Dias"):
+        clases = clases.sort_values("start_dec").reset_index(drop=True)
+        gaps = clases["start_dec"].iloc[1:].values - clases["end_dec"].iloc[:-1].values
+        total += float(max(0, gaps.sum()))
+    return round(total, 2)
+
+def generar_horarios_optimos(df: pd.DataFrame, materias_deseadas: list, limite_horas: int = 4):
+    if "start_dec" not in df.columns:
+        df = agregar_columnas_temporales(df)
+
+    grupos_nrcs = []
+    for materia in materias_deseadas:
+        nrcs = df[df["Materia"] == materia]["NRC"].unique().tolist()
+        if not nrcs:
+            return None, f"No se encontraron secciones para '{materia}' en el catálogo."
+        grupos_nrcs.append(nrcs)
+
+    total_combos = 1
+    for grupo in grupos_nrcs:
+        total_combos *= len(grupo)
+    if total_combos > 50000:
+        return None, f"Hay {total_combos:,} combinaciones posibles. Reduce las materias."
+
+    viables = []
+    for combo_nrcs in product(*grupos_nrcs):
+        df_combo = df[df["NRC"].isin(combo_nrcs)].copy()
+        
+        if _hay_empalme(df_combo):
+            continue
+            
+        horas_muertas = _calcular_horas_muertas(df_combo)
+        if horas_muertas > limite_horas:
+            continue
+            
+        viables.append({
+            "nrcs": list(combo_nrcs),
+            "horas_muertas": horas_muertas,
+            "df": df_combo,
+        })
+
+    viables.sort(key=lambda x: x["horas_muertas"])
+    return viables, f"Se encontraron {len(viables)} horarios viables."
+
+# ==========================================
+# 4. EL ARQUITECTO VISUAL
+# ==========================================
+
+def construir_figura(df: pd.DataFrame) -> go.Figure:
+    colors = px.colors.qualitative.Plotly
+    materia_to_color = {materia: colors[i % len(colors)] for i, materia in enumerate(df["Materia"].unique())}
+    
+    df = df.copy()
+    df["Color"] = df["Materia"].map(materia_to_color)
+
+    fig = go.Figure()
+    for materia, group in df.groupby("Materia"):
+        
+        if 'Salón' in group.columns:
+            salon_data = group['Salón']
+        elif 'Salon' in group.columns: 
+            salon_data = group['Salon']
+        else:
+            salon_data = ["Aula sin asignar"] * len(group)
+            
+        # Programación defensiva en caso de que no haya columna Profesor
+        if 'Profesor' in group.columns:
+            prof_data = group['Profesor']
+        else:
+            prof_data = ["Sin Profesor"] * len(group)
+
+        custom_data = list(zip(prof_data, salon_data, group['Hora_ini'], group['Hora_fin']))
+        
+        fig.add_trace(go.Bar(
+            name=materia, x=group["Dia_Num"], y=group["duration_dec"], base=group["start_dec"],
+            marker_color=group["Color"].iloc[0], opacity=1.0,
+            customdata=custom_data, text=group["Materia"],
+            textposition="inside", insidetextanchor="middle",
+            hovertemplate="<b>%{text}</b><br><br><b>Profesor:</b> %{customdata[0]}<br><b>Salón:</b> %{customdata[1]}<br><b>Horario:</b> %{customdata[2]} - %{customdata[3]}<br><extra></extra>"
+        ))
+
+    horas = list(range(7, 22))
+    fig.update_layout(
+        barmode="overlay", paper_bgcolor="white", plot_bgcolor="white", font=dict(color="black"), height=700,
+        xaxis=dict(title="", side="top", tickmode="array", tickvals=[1, 2, 3, 4, 5, 6], ticktext=["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"], showgrid=True, gridcolor="#e5e5e5", zeroline=False),
+        yaxis=dict(title="Horario", range=[21.5, 6.5], tickmode="array", tickvals=horas, ticktext=[f"{h:02d}:00" for h in horas], showgrid=True, gridcolor="#e5e5e5", zeroline=False),
+        margin=dict(l=40, r=40, t=60, b=40),
+    )
+    return fig
