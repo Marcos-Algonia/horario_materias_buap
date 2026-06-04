@@ -15,11 +15,11 @@ from itertools import product
 def _parse_hora(s: str) -> str:
     """Convierte horas con 'a.m./p.m.' a formato militar 24h ('HH:MM:SS')"""
     s = str(s).strip()
-    # Si ya es formato 24h puro (Ej: 14:00:00 o 9:00:00)
+    
     if re.match(r'^\d{1,2}:\d{2}:\d{2}$', s):
         return s
         
-    # Si tiene a.m. o p.m.
+    #este punto es en dado caso de que el CSV este en formato a.m y p.m
     match = re.match(r'(\d{1,2}):(\d{2})(?::\d{2})?\s*(a\.?\s*m\.?|p\.?\s*m\.?)?', s, re.IGNORECASE)
     if not match:
         return s 
@@ -37,13 +37,13 @@ def _parse_hora(s: str) -> str:
 
 def cargar_materias(ruta: str) -> pd.DataFrame:
     """Lee el CSV y repara columnas rotas, símbolos fantasma (BOM) y horas."""
-    # Leemos el archivo crudo
+    
     df = pd.read_csv(ruta, encoding='latin1')
 
-    # Limpiamos espacios extraños al inicio/final de las columnas
+   
     df.columns = df.columns.str.strip()
 
-    # MAGIA 1: Reparamos el Mojibake (Transforma 'SalÃ³n' -> 'Salón')
+    
     columnas_limpias = []
     for c in df.columns:
         if any(ord(ch) > 127 for ch in c):
@@ -55,21 +55,21 @@ def cargar_materias(ruta: str) -> pd.DataFrame:
         else:
             columnas_limpias.append(c)
             
-    # 🛡️ CÓDIGO DEFENSIVO EXTREMO: Eliminamos el Fantasma de Excel (BOM)
+    # BOM
     columnas_limpias = [c.replace('\ufeff', '').replace('ï»¿', '').strip() for c in columnas_limpias]
     df.columns = columnas_limpias
     
-    # Blindaje de nombres: Forzamos a que las columnas vitales se llamen exactamente como queremos
+    
     df.rename(columns=lambda x: 'NRC' if 'NRC' in str(x).upper() else x, inplace=True)
     df.rename(columns=lambda x: 'Materia' if 'MATERIA' in str(x).upper() else x, inplace=True)
     df.rename(columns=lambda x: 'Dias' if 'DIA' in str(x).upper() else x, inplace=True)
 
-    # MAGIA 2: Planchamos las horas al mismo formato universal
+    # horas al mismo formato universal
     for col in ['Hora_ini', 'Hora_fin']:
         if col in df.columns:
             df[col] = df[col].apply(_parse_hora)
 
-    # Tiramos filas que tengan basura o estén vacías en el Excel
+    
     df = df.dropna(subset=['Hora_ini', 'Hora_fin', 'Dias'])
 
     return df.reset_index(drop=True)
@@ -81,7 +81,7 @@ def hms_a_decimal(hms_str: str) -> float:
     """Convierte '09:30:00' a 9.5 para poder graficarlo"""
     h, m, s = map(int, str(hms_str).split(":"))
     decimal = h + (m / 60.0) + (s / 3600.0)
-    # Redondeo fino para evitar "huecos" visuales en las gráficas (ej. 8.98 -> 9.0)
+    # Redondeo fino para evitar "huecos" visuales en las gráficas 
     if abs(decimal - round(decimal)) < 0.05:
         return round(decimal)
     return decimal
@@ -97,7 +97,7 @@ def agregar_columnas_temporales(df: pd.DataFrame) -> pd.DataFrame:
     df["duration_dec"] = df["end_dec"] - df["start_dec"]
     return df
     # ==========================================
-# 3. EL MOTOR MATEMÁTICO (Empalmes y Generador)
+# 3. Empalmes y Generador
 # ==========================================
 
 def detectar_empalmes(df: pd.DataFrame) -> list:
@@ -170,7 +170,7 @@ def generar_horarios_optimos(df: pd.DataFrame, materias_deseadas: list, limite_h
     return viables, f"Se encontraron {len(viables)} horarios viables."
 
 # ==========================================
-# 4. EL ARQUITECTO VISUAL (Plotly a prueba de fallos)
+# 4. Plotly a prueba de fallos
 # ==========================================
 
 def construir_figura(df: pd.DataFrame) -> go.Figure:
