@@ -1,328 +1,91 @@
 """
-utils.py — Lógica de negocio para la app de horarios.
-Separado de la UI para facilitar pruebas y reutilización.
+utils.py — El Cimiento y Motor del Sistema
+Fase 1: Sanitización de Datos y Matemáticas Temporales
 """
-
 import re
-from itertools import product
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+from itertools import product
 
+# ==========================================
+# 1. EL PURIFICADOR DE DATOS
+# ==========================================
 
-# ---------------------------------------------------------------------------
-# Carga de datos
-# ---------------------------------------------------------------------------
-
-def _parse_hora(s: str) -> str | None:
-    """
-    Normaliza distintos formatos de hora a 'HH:MM:SS'.
-      '09:00 a. m.' -> '09:00:00'
-      '01:00 p. m.' -> '13:00:00'
-      '14:00:00'    -> '14:00:00'  (pasa intacto)
-      Valores corruptos (ej: '#¡VALOR!') -> None  (se filtran después)
-    """
+def _parse_hora(s: str) -> str:
+    """Convierte horas con 'a.m./p.m.' a formato militar 24h ('HH:MM:SS')"""
     s = str(s).strip()
-    if re.match(r'^\d{2}:\d{2}:\d{2}$', s):
-        return s  # ya está en formato correcto
+    # Si ya es formato 24h puro (Ej: 14:00:00 o 9:00:00)
+    if re.match(r'^\d{1,2}:\d{2}:\d{2}$', s):
+        return s
+        
+    # Si tiene a.m. o p.m.
     match = re.match(r'(\d{1,2}):(\d{2})(?::\d{2})?\s*(a\.?\s*m\.?|p\.?\s*m\.?)?', s, re.IGNORECASE)
     if not match:
-        return None  # valor corrupto; la fila se descartará en cargar_materias
+        return s 
+
     h = int(match.group(1))
     m = int(match.group(2))
     periodo = (match.group(3) or '').lower().replace(' ', '').replace('.', '')
+    
     if periodo == 'pm' and h != 12:
         h += 12
     elif periodo == 'am' and h == 12:
         h = 0
+        
     return f"{h:02d}:{m:02d}:00"
 
-
-def cargar_materias(ruta: str = "materias.csv") -> pd.DataFrame:
-    """
-    Lee el CSV de materias y normaliza automáticamente:
-      - Espacios en nombres de columnas  ('Hora_ini ' -> 'Hora_ini')
-      - Encoding de acentos en columnas  ('SalÃ³n'   -> 'Salón')
-      - Formato de horas                 ('09:00 a. m.' -> '09:00:00')
-      - Filas con valores corruptos      ('#¡VALOR!')  -> se descartan
-    Compatible con CSVs exportados con distintas configuraciones regionales.
-    """
+def cargar_materias(ruta: str) -> pd.DataFrame:
+    """Lee el CSV y repara columnas rotas (como 'SalÃ³n') y horas en distintos formatos."""
+    # Leemos el archivo crudo
     df = pd.read_csv(ruta, encoding='latin1')
 
-    # 1. Eliminar espacios sobrantes en nombres de columnas
+    # Limpiamos espacios extraños al inicio/final de las columnas
     df.columns = df.columns.str.strip()
 
-    # 2. Corregir columnas con encoding roto (latin1 mal interpretado como utf-8)
-    df.columns = [
-        c.encode('latin1').decode('utf-8', errors='replace')
-        if any(ord(ch) > 127 for ch in c) else c
-        for c in df.columns
-    ]
+    # MAGIA 1: Reparamos el Mojibake (Transforma 'SalÃ³n' -> 'Salón')
+    columnas_limpias = []
+    for c in df.columns:
+        if any(ord(ch) > 127 for ch in c):
+            try:
+                c_limpia = c.encode('latin1').decode('utf-8', errors='replace')
+                columnas_limpias.append(c_limpia)
+            except:
+                columnas_limpias.append(c)
+        else:
+            columnas_limpias.append(c)
+    df.columns = columnas_limpias
 
-    # 3. Normalizar horas al formato HH:MM:SS que espera hms_a_decimal()
+    # MAGIA 2: Planchamos las horas al mismo formato universal
     for col in ['Hora_ini', 'Hora_fin']:
         if col in df.columns:
             df[col] = df[col].apply(_parse_hora)
 
-    # 4. Descartar filas con horas o días inválidos (celdas de error de Excel, etc.)
+    # Tiramos filas que tengan basura o estén vacías en el Excel
     df = df.dropna(subset=['Hora_ini', 'Hora_fin', 'Dias'])
 
     return df.reset_index(drop=True)
 
-
-def buscar_por_nombre(df: pd.DataFrame, texto: str) -> pd.DataFrame:
-    """Filtra materias cuyo nombre contenga `texto` (sin importar mayúsculas)."""
-    mask = df["Materia"].str.contains(texto, case=False, na=False)
-    resultados = df[mask].copy()
-    resultados["Horario"] = (
-        resultados["Hora_ini"].astype(str) + " - " + resultados["Hora_fin"].astype(str)
-    )
-    return resultados
-
-
-def filtrar_por_nrcs(df: pd.DataFrame, nrcs: list[int]) -> pd.DataFrame:
-    """Retorna las filas del DataFrame cuyos NRC estén en la lista dada."""
-    return df[df["NRC"].isin(nrcs)].copy()
-
-
-def parsear_nrcs(texto: str) -> list[int]:
-    """
-    Convierte un string de NRCs separados por comas en una lista de enteros.
-    Ignora silenciosamente los tokens que no sean dígitos válidos.
-    """
-    nrcs = []
-    for token in texto.split(","):
-        token = token.strip()
-        if token.isdigit():
-            try:
-                nrcs.append(int(token))
-            except ValueError:
-                pass
-    return nrcs
-
-
-# ---------------------------------------------------------------------------
-# Conversión de horarios
-# ---------------------------------------------------------------------------
+# ==========================================
+# 2. UTILIDADES DE TIEMPO
+# ==========================================
 
 def hms_a_decimal(hms_str: str) -> float:
-    """
-    Convierte un string 'HH:MM:SS' a horas decimales.
-    Redondea al entero más cercano si el error de float es menor a 0.05 h,
-    para evitar artefactos como 7.9999... en lugar de 8.0.
-    """
+    """Convierte '09:30:00' a 9.5 para poder graficarlo"""
     h, m, s = map(int, str(hms_str).split(":"))
     decimal = h + (m / 60.0) + (s / 3600.0)
+    # Redondeo fino para evitar "huecos" visuales en las gráficas (ej. 8.98 -> 9.0)
     if abs(decimal - round(decimal)) < 0.05:
         return round(decimal)
     return decimal
 
-
 def agregar_columnas_temporales(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Añade columnas de apoyo al DataFrame de materias:
-      - Dia_Num   : número de día (Lunes=1 … Viernes=5)
-      - start_dec : hora de inicio en decimal
-      - end_dec   : hora de fin en decimal
-      - duration_dec: duración en horas decimales
-    """
-    map_dias = {"L": 1, "A": 2, "M": 3, "J": 4, "V": 5}
+    """Le inyecta las matemáticas al dataframe antes de revisar empalmes."""
     df = df.copy()
+    map_dias = {"L": 1, "A": 2, "M": 3, "J": 4, "V": 5, "S": 6} # Por si alguna vez hay sábados
     df["Dia_Num"] = df["Dias"].map(map_dias)
+    
     df["start_dec"] = df["Hora_ini"].astype(str).apply(hms_a_decimal)
     df["end_dec"] = df["Hora_fin"].astype(str).apply(hms_a_decimal)
     df["duration_dec"] = df["end_dec"] - df["start_dec"]
     return df
-
-
-# ---------------------------------------------------------------------------
-# Detección de empalmes
-# ---------------------------------------------------------------------------
-
-def detectar_empalmes(df: pd.DataFrame) -> list[str]:
-    """
-    Revisa si alguna materia se traslapa con otra en el mismo día.
-    Retorna una lista de mensajes descriptivos; lista vacía = sin empalmes.
-    """
-    mensajes = []
-    for dia, clases_del_dia in df.groupby("Dias"):
-        clases = clases_del_dia.sort_values("start_dec").reset_index(drop=True)
-        # Comparamos cada clase con la siguiente usando shift vectorizado
-        fin_anterior = clases["end_dec"].shift(1)
-        empalme = clases["start_dec"] < fin_anterior
-        for idx in clases[empalme].index:
-            materia_actual = clases.loc[idx, "Materia"]
-            materia_anterior = clases.loc[idx - 1, "Materia"]
-            mensajes.append(
-                f"El día {dia}, **{materia_anterior}** choca con **{materia_actual}**."
-            )
-    return mensajes
-
-
-# ---------------------------------------------------------------------------
-# Construcción de la figura
-# ---------------------------------------------------------------------------
-
-def construir_figura(df: pd.DataFrame) -> go.Figure:
-    """
-    Construye y retorna la figura Plotly del horario semanal.
-    Recibe un DataFrame que ya incluye las columnas temporales.
-    """
-    colors = px.colors.qualitative.Plotly
-    materia_to_color = {
-        materia: colors[i % len(colors)]
-        for i, materia in enumerate(df["Materia"].unique())
-    }
-    df = df.copy()
-    df["Color"] = df["Materia"].map(materia_to_color)
-
-    fig = go.Figure()
-
-    for materia, group in df.groupby("Materia"):
-        custom_data = group[["Profesor", "Salón", "Hora_ini", "Hora_fin"]].values
-        fig.add_trace(
-            go.Bar(
-                name=materia,
-                x=group["Dia_Num"],
-                y=group["duration_dec"],
-                base=group["start_dec"],
-                marker_color=group["Color"].iloc[0],
-                opacity=1.0,
-                customdata=custom_data,
-                text=group["Materia"],
-                textposition="inside",
-                insidetextanchor="middle",
-                hovertemplate=(
-                    "<b>%{text}</b><br><br>"
-                    "<b>Profesor:</b> %{customdata[0]}<br>"
-                    "<b>Salón:</b> %{customdata[1]}<br>"
-                    "<b>Horario:</b> %{customdata[2]} - %{customdata[3]}<br>"
-                    "<extra></extra>"
-                ),
-            )
-        )
-
-    horas = list(range(7, 22))
-
-    xaxis_cfg = dict(
-        title="",
-        side="top",
-        tickmode="array",
-        tickvals=[1, 2, 3, 4, 5],
-        ticktext=["Lunes", "Martes", "Miércoles", "Jueves", "Viernes"],
-        showgrid=True,
-        gridcolor="#e5e5e5",
-        zeroline=False,
-    )
-
-    yaxis_cfg = dict(
-        title="Horario",
-        range=[21.5, 6.5],
-        tickmode="array",
-        tickvals=horas,
-        ticktext=[f"{h:02d}:00" for h in horas],
-        showgrid=True,
-        gridcolor="#e5e5e5",
-        zeroline=False,
-    )
-
-    fig.update_layout(
-        barmode="overlay",
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-        font=dict(color="black"),
-        height=700,
-        xaxis=xaxis_cfg,
-        yaxis=yaxis_cfg,
-        margin=dict(l=40, r=40, t=60, b=40),
-    )
-
-    return fig
-
-
-# ---------------------------------------------------------------------------
-# Generador automático de horarios óptimos
-# ---------------------------------------------------------------------------
-
-MAX_COMBINACIONES = 50_000  # límite de seguridad para no colgar el servidor
-
-def _hay_empalme(df_combo: pd.DataFrame) -> bool:
-    """Retorna True si hay al menos un traslape entre materias en el mismo día."""
-    for _, clases in df_combo.groupby("Dias"):
-        clases = clases.sort_values("start_dec").reset_index(drop=True)
-        if (clases["start_dec"] < clases["end_dec"].shift(1)).any():
-            return True
-    return False
-
-
-def _calcular_horas_muertas(df_combo: pd.DataFrame) -> float:
-    """Suma los huecos entre clases del mismo día (horas libres intermedias)."""
-    total = 0.0
-    for _, clases in df_combo.groupby("Dias"):
-        clases = clases.sort_values("start_dec").reset_index(drop=True)
-        gaps = clases["start_dec"].iloc[1:].values - clases["end_dec"].iloc[:-1].values
-        total += float(max(0, gaps.sum()))
-    return round(total, 2)
-
-
-def generar_horarios_optimos(
-    df: pd.DataFrame,
-    materias_deseadas: list[str],
-    limite_horas: int = 4,
-) -> tuple[list[dict] | None, str]:
-    """
-    Encuentra todas las combinaciones de NRCs (una sección por materia) que:
-      1. No tengan empalmes de horario.
-      2. Tengan <= `limite_horas` horas libres acumuladas por semana.
-
-    Retorna (lista_de_horarios_ordenada_por_horas_muertas, mensaje).
-    Si hay demasiadas combinaciones posibles, retorna (None, mensaje_de_error).
-
-    Cada elemento de la lista es un dict con:
-      - 'nrcs'         : lista de NRCs del horario
-      - 'horas_muertas': float con las horas libres intermedias
-      - 'df'           : DataFrame listo para graficar (con start_dec, end_dec)
-    """
-    # Preparar columnas temporales si no existen
-    if "start_dec" not in df.columns:
-        df = agregar_columnas_temporales(df)
-
-    # Agrupar NRCs disponibles por cada materia deseada
-    grupos_nrcs: list[list[int]] = []
-    for materia in materias_deseadas:
-        nrcs = df[df["Materia"] == materia]["NRC"].unique().tolist()
-        if not nrcs:
-            return None, f"No se encontraron secciones para '{materia}' en el catálogo."
-        grupos_nrcs.append(nrcs)
-
-    # Validar que el número de combinaciones sea manejable
-    total_combos = 1
-    for grupo in grupos_nrcs:
-        total_combos *= len(grupo)
-    if total_combos > MAX_COMBINACIONES:
-        return None, (
-            f"Hay {total_combos:,} combinaciones posibles, demasiadas para procesar. "
-            "Reduce el número de materias o el límite de horas libres."
-        )
-
-    viables: list[dict] = []
-
-    for combo_nrcs in product(*grupos_nrcs):
-        df_combo = df[df["NRC"].isin(combo_nrcs)].copy()
-
-        if _hay_empalme(df_combo):
-            continue
-
-        horas_muertas = _calcular_horas_muertas(df_combo)
-        if horas_muertas > limite_horas:
-            continue
-
-        viables.append({
-            "nrcs": list(combo_nrcs),
-            "horas_muertas": horas_muertas,
-            "df": df_combo,
-        })
-
-    # Ordenar de menor a mayor horas muertas (horarios más compactos primero)
-    viables.sort(key=lambda x: x["horas_muertas"])
-    return viables, f"Se encontraron {len(viables)} horarios viables."
