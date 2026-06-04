@@ -140,6 +140,4 @@ st.markdown("---")
 st.markdown("Recuerda tomar captura de tu horario.")
 st.markdown("Aún no tomo en cuenta los créditos, entonces eso debería de quedar a tu consideración :p ")
     
-st.markdown(
-    "Si alguien me pregunta por ti, diré que estoy todos los días "
-    "alejando mi yo de ti — Marcos Algonia")
+st.markdown("Funcionando con IA y fe ")
