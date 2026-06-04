@@ -107,12 +107,12 @@ with tab_algoritmo:
                 if horarios_generados is None:
                     st.error(mensaje)
                 elif len(horarios_generados) == 0:
-                    st.warning("No se encontró ningún horario con esas restricciones.")
+                    st.warning("No se encontró ningún horario viable con esas restricciones.")
                 else:
                     st.success(f"¡Se encontraron {len(horarios_generados)} horarios viables sin empalmes!")
                     
-                   mejor_horario = horarios_generados[0]
-                    st.markdown(f"### 🏆 Opción Óptima")
+                    mejor_horario = horarios_generados[0]
+                    st.markdown("### 🏆 Opción Óptima")
                     st.write(f"**Horas libres a la semana:** {mejor_horario['horas_muertas']} hrs")
                     
                     st.markdown("#### 📚 Detalle de Inscripción:")
@@ -127,7 +127,7 @@ with tab_algoritmo:
                     for _, fila in info_clases.iterrows():
                         st.write(f"- **{fila['Materia']}** (NRC: {fila['NRC']}) 👨‍🏫 **Profesor:** {fila['Profesor']}")
                     
-                    st.markdown("---") # Una pequeña línea divisoria por estética
+                    st.markdown("---")
                     
                     # Inyectamos las variables de tiempo y dibujamos el horario ganador
                     df_ganador = agregar_columnas_temporales(df_ganador)
