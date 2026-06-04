@@ -17,7 +17,7 @@ from utils import (
 st.set_page_config(page_title="Mi Horario", layout="wide", initial_sidebar_state="collapsed")
 st.title("⚙️ Krea-t tu horario")
 
-# --- CARGA DE DATOS MULTICARRERA ---
+# --- CARGA POR COLEGIO---
 mapa_colegios = {
     "Ingeniería Química (IQ)": "materiasIQ.csv",
     "Ingeniería Ambiental (IA)": "materiasIA.csv",
@@ -32,7 +32,7 @@ colegio_elegido = st.selectbox(
 
 archivo_objetivo = mapa_colegios[colegio_elegido]
 
-# El caché ahora llama al purificador de datos
+
 @st.cache_data
 def load_data(ruta):
     return cargar_materias(ruta)
@@ -45,7 +45,7 @@ except FileNotFoundError:
     st.stop()
 
 # --- LAS PESTAÑAS ---
-tab_manual, tab_algoritmo = st.tabs(["🛠️ Ya tienes tus NRCs", "🤖 Generador Automático"])
+tab_manual, tab_algoritmo = st.tabs(["🛠️ MANUAL", "🤖 Generador Automático"])
 
 # ==========================================
 # PESTAÑA 1: MODO MANUAL
@@ -107,29 +107,29 @@ with tab_algoritmo:
                 if horarios_generados is None:
                     st.error(mensaje)
                 elif len(horarios_generados) == 0:
-                    st.warning("No se encontró ningún horario viable con esas restricciones.")
+                    st.warning("No se encontró ningún horario con esas restricciones.")
                 else:
                     st.success(f"¡Se encontraron {len(horarios_generados)} horarios viables sin empalmes!")
                     
                     mejor_horario = horarios_generados[0]
-                    st.markdown("### 🏆 Opción Óptima")
+                    st.markdown("### 🏆Mejor opción")
                     st.write(f"**Horas libres a la semana:** {mejor_horario['horas_muertas']} hrs")
                     
                     st.markdown("#### 📚 Detalle de Inscripción:")
                     
-                    # Preparamos el dataframe ganador para extraer los datos y graficar
+                   
                     df_ganador = mejor_horario['df']
                     
-                    # MAGIA: Extraemos las materias únicas con su NRC y Profesor, sin que se repitan los días
+                    
                     info_clases = df_ganador[['Materia', 'NRC', 'Profesor']].drop_duplicates()
                     
-                    # Imprimimos una lista elegante con la información
+                    # Imprimimos una lista de información
                     for _, fila in info_clases.iterrows():
-                        st.write(f"- **{fila['Materia']}** (NRC: {fila['NRC']}) 👨‍🏫 **Profesor:** {fila['Profesor']}")
+                        st.write(f"- **{fila['Materia']}** (NRC: {fila['NRC']})  **Profesor:** {fila['Profesor']}")
                     
                     st.markdown("---")
                     
-                    # Inyectamos las variables de tiempo y dibujamos el horario ganador
+                   
                     df_ganador = agregar_columnas_temporales(df_ganador)
                     fig_ganador = construir_figura(df_ganador)
                     st.plotly_chart(fig_ganador, use_container_width=True, theme=None)
