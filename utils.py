@@ -130,16 +130,24 @@ def _calcular_horas_muertas(df_combo: pd.DataFrame) -> float:
         total += float(max(0, gaps.sum()))
     return round(total, 2)
 
-def generar_horarios_optimos(df: pd.DataFrame, materias_deseadas: list, limite_horas: int = 4):
-    """El cerebro combinatorio: busca combinaciones viables sin empalmes."""
+def generar_horarios_optimos(df: pd.DataFrame, materias_deseadas: list, limite_horas: int = 4, hora_minima: float = 7.0):
+    """El cerebro combinatorio: busca combinaciones viables respetando tu hora de despertar."""
     if "start_dec" not in df.columns:
         df = agregar_columnas_temporales(df)
 
+    # 🛡️ FILTRO MAESTRO: La Lista Negra de Madrugadas
+    # 1. Detectamos a los culpables: NRCs que tengan al menos 1 día de clases antes de tu hora
+    nrcs_prohibidos = df[df["start_dec"] < hora_minima]["NRC"].unique()
+    
+    # 2. Limpiamos la base: Nos quedamos solo con los NRCs que NO están en la lista prohibida
+    df_filtrado = df[~df["NRC"].isin(nrcs_prohibidos)].copy()
+
     grupos_nrcs = []
     for materia in materias_deseadas:
-        nrcs = df[df["Materia"] == materia]["NRC"].unique().tolist()
+        # Ahora buscamos las materias dentro de la base purificada
+        nrcs = df_filtrado[df_filtrado["Materia"] == materia]["NRC"].unique().tolist()
         if not nrcs:
-            return None, f"No se encontraron secciones para '{materia}' en el catálogo."
+            return None, f"No se encontraron opciones para '{materia}' que respeten tu hora de entrada (después de las {int(hora_minima)}:00)."
         grupos_nrcs.append(nrcs)
 
     # Seguro de vida termodinámico
@@ -151,7 +159,7 @@ def generar_horarios_optimos(df: pd.DataFrame, materias_deseadas: list, limite_h
 
     viables = []
     for combo_nrcs in product(*grupos_nrcs):
-        df_combo = df[df["NRC"].isin(combo_nrcs)].copy()
+        df_combo = df_filtrado[df_filtrado["NRC"].isin(combo_nrcs)].copy()
         
         if _hay_empalme(df_combo):
             continue

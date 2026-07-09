@@ -97,39 +97,48 @@ with tab_algoritmo:
     
     todas_las_materias = sorted(df['Materia'].unique())
     materias_deseadas = st.multiselect("Elige tus materias:", todas_las_materias)
-    limite_horas = st.slider("Máximo de horas libres por semana:", 0, 20, 4)
+    
+    # Dividimos los controles en dos columnas para que se vea elegante
+    colA, colB = st.columns(2)
+    with colA:
+        limite_horas = st.slider("Máximo de horas libres toleradas por semana:", 0, 20, 4)
+    with colB:
+        hora_despertador = st.slider("🕰️ No quiero clases antes de las:", 7, 16, 7, format="%d:00 hrs")
 
     if st.button("Generar Horario Óptimo"):
         if len(materias_deseadas) > 0:
-            with st.spinner('Procesando combinaciones...'):
-                horarios_generados, mensaje = generar_horarios_optimos(df, materias_deseadas, limite_horas)
+            with st.spinner('Procesando combinaciones termodinámicas...'):
+                
+                # Le pasamos nuestra nueva variable (hora_despertador) al motor
+                horarios_generados, mensaje = generar_horarios_optimos(df, materias_deseadas, limite_horas, hora_despertador)
                 
                 if horarios_generados is None:
                     st.error(mensaje)
                 elif len(horarios_generados) == 0:
-                    st.warning("No se encontró ningún horario con esas restricciones.")
+                    st.warning("No se encontró ningún horario viable con esas restricciones.")
                 else:
+                    # (El resto de tu código para imprimir al ganador sigue exactamente igual...)
                     st.success(f"¡Se encontraron {len(horarios_generados)} horarios viables sin empalmes!")
                     
                     mejor_horario = horarios_generados[0]
-                    st.markdown("### 🏆Mejor opción")
+                    st.markdown("### 🏆 Opción Óptima")
                     st.write(f"**Horas libres a la semana:** {mejor_horario['horas_muertas']} hrs")
                     
                     st.markdown("#### 📚 Detalle de Inscripción:")
                     
-                   
+                    # Preparamos el dataframe ganador para extraer los datos y graficar
                     df_ganador = mejor_horario['df']
                     
-                    
+                    # MAGIA: Extraemos las materias únicas con su NRC y Profesor
                     info_clases = df_ganador[['Materia', 'NRC', 'Profesor']].drop_duplicates()
                     
-                    # Imprimimos una lista de información
+                    # Imprimimos una lista elegante con la información
                     for _, fila in info_clases.iterrows():
-                        st.write(f"- **{fila['Materia']}** (NRC: {fila['NRC']})  **Profesor:** {fila['Profesor']}")
+                        st.write(f"- **{fila['Materia']}** (NRC: {fila['NRC']}) 👨‍🏫 **Profesor:** {fila['Profesor']}")
                     
                     st.markdown("---")
                     
-                   
+                    # Inyectamos las variables de tiempo y dibujamos el horario ganador
                     df_ganador = agregar_columnas_temporales(df_ganador)
                     fig_ganador = construir_figura(df_ganador)
                     st.plotly_chart(fig_ganador, use_container_width=True, theme=None)
